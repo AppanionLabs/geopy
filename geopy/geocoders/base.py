@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import inspect
+import itertools
 import threading
 
 from geopy import compat
@@ -224,7 +225,8 @@ class Geocoder:
             proxies=DEFAULT_SENTINEL,
             user_agent=None,
             ssl_context=DEFAULT_SENTINEL,
-            adapter_factory=None
+            adapter_factory=None,
+            max_batch_size=None,
     ):
         self.scheme = scheme or options.default_scheme
         if self.scheme not in ('http', 'https'):
@@ -238,6 +240,7 @@ class Geocoder:
         self.headers = {'User-Agent': user_agent or options.default_user_agent}
         self.ssl_context = (ssl_context if ssl_context is not DEFAULT_SENTINEL
                             else options.default_ssl_context)
+        self.max_batch_size = max_batch_size
 
         if isinstance(self.proxies, str):
             self.proxies = {'http': self.proxies, 'https': self.proxies}
@@ -290,6 +293,30 @@ class Geocoder:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.adapter.__aexit__(exc_type, exc_val, exc_tb)
+
+    def _apply_batchwise(self, query, func, *fargs, **fkwarg):
+        """
+        Process a batch of queries with a given callback function.
+        """
+        if self.__run_async:
+            raise ConfigurationError(
+                "Batch processing is not supported in async mode"
+            )
+        if not self.max_batch_size:
+            raise ConfigurationError(
+                "The geocoder does not support batch processing"
+            )
+
+        result = [
+            func(
+                query[i:i + self.max_batch_size],
+                *fargs, **fkwarg
+            )
+            for i in range(0, len(query), self.max_batch_size)
+        ]
+        return list(itertools.chain.from_iterable(result))
+
+
 
     def _coerce_point_to_string(self, point, output_format="%(lat)s,%(lon)s"):
         """
