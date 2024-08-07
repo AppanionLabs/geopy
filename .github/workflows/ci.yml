@@ -92,6 +92,7 @@ jobs:
         ARCGIS_USERNAME: ${{ secrets.ARCGIS_USERNAME }}
         AZURE_SUBSCRIPTION_KEY: ${{ secrets.AZURE_SUBSCRIPTION_KEY }}
         BAIDU_KEY: ${{ secrets.BAIDU_KEY }}
+        GEOAPIFY_KEY: ${{ secrets.GEOAPIFY_KEY }}
         BAIDU_KEY_REQUIRES_SK: ${{ secrets.BAIDU_KEY_REQUIRES_SK }}
         BAIDU_SEC_KEY: ${{ secrets.BAIDU_SEC_KEY }}
         BAIDU_V3_KEY: ${{ secrets.BAIDU_V3_KEY }}
