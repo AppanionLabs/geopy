@@ -294,7 +294,7 @@ class Geoapify(Geocoder):
         if results.get("error"):
             raise GeocoderQueryError(str(results))
 
-        results = results.get("features", [])
+        results = results.get("results", [])
         if not len(results):
             return None
 
