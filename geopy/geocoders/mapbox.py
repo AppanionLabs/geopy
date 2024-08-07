@@ -178,7 +178,8 @@ class MapBox(Geocoder):
             query,
             *,
             exactly_one=True,
-            timeout=DEFAULT_SENTINEL
+            timeout=DEFAULT_SENTINEL,
+            language=None
     ):
         """
         Return an address by location point.
@@ -196,11 +197,19 @@ class MapBox(Geocoder):
             exception. Set this only if you wish to override, on this call
             only, the value set during the geocoder's initialization.
 
+        :param str language: This parameter controls the language of the text supplied in
+            responses, and also affects result scoring, with results matching the user’s
+            query in the requested language being preferred over results that match in
+            another language. You can pass two letters country codes (ISO 639-1).
+
         :rtype: ``None``, :class:`geopy.location.Location` or a list of them, if
             ``exactly_one=False``.
         """
         params = {}
         params['access_token'] = self.api_key
+
+        if language:
+            params['language'] = language
 
         point = self._coerce_point_to_string(query, "%(lon)s,%(lat)s")
         quoted_query = quote(point.encode('utf-8'))
