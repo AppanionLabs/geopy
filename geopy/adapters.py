@@ -165,7 +165,7 @@ class BaseAdapter(abc.ABC):
         """
 
     @abc.abstractmethod
-    def get_json(self, url, *, timeout, headers):
+    def get_json(self, url, *, timeout, headers, data):
         """Same as ``get_text`` except that the response is expected
         to be a valid JSON. The value returned is the parsed JSON.
 
@@ -178,10 +178,12 @@ class BaseAdapter(abc.ABC):
             See :attr:`geopy.geocoders.options.default_timeout`.
 
         :param dict headers: A dict with custom HTTP request headers.
+
+        :param dict data: A dict with custom HTTP request data.
         """
 
     @abc.abstractmethod
-    def get_text(self, url, *, timeout, headers):
+    def get_text(self, url, *, timeout, headers, data):
         """Make a GET request and return the response as string.
 
         This method should not raise any exceptions other than these:
@@ -201,6 +203,8 @@ class BaseAdapter(abc.ABC):
             See :attr:`geopy.geocoders.options.default_timeout`.
 
         :param dict headers: A dict with custom HTTP request headers.
+
+        :param dict data: A dict with custom HTTP request data.
         """
 
 
@@ -254,6 +258,14 @@ def _normalize_proxies(proxies):
     return normalized
 
 
+def _convert_to_bytes(data):
+    if isinstance(data, str):
+        return data.encode("utf-8")
+    elif isinstance(data, dict):
+        return json.dumps(data).encode("utf-8")
+    return data
+
+
 class URLLibAdapter(BaseSyncAdapter):
     """The fallback adapter which uses urllib from the Python standard
     library, see :func:`urllib.request.urlopen`.
@@ -283,8 +295,10 @@ class URLLibAdapter(BaseSyncAdapter):
         )
         self.urlopen = opener.open
 
-    def get_json(self, url, *, timeout, headers):
-        text = self.get_text(url, timeout=timeout, headers=headers)
+    def get_json(self, url, *, timeout, headers, data):
+        text = self.get_text(
+            url, timeout=timeout, headers=headers, data=data
+        )
         try:
             return json.loads(text)
         except ValueError:
@@ -292,8 +306,8 @@ class URLLibAdapter(BaseSyncAdapter):
                 "Could not deserialize using deserializer:\n%s" % text
             )
 
-    def get_text(self, url, *, timeout, headers):
-        req = Request(url=url, headers=headers)
+    def get_text(self, url, *, timeout, headers, data):
+        req = Request(url=url, headers=headers, data=_convert_to_bytes(data))
         try:
             page = self.urlopen(req, timeout=timeout)
         except Exception as error:
@@ -464,12 +478,12 @@ class RequestsAdapter(BaseSyncAdapter):
                 # it's safe to ignore this error
                 pass
 
-    def get_text(self, url, *, timeout, headers):
-        resp = self._request(url, timeout=timeout, headers=headers)
+    def get_text(self, url, *, timeout, headers, data):
+        resp = self._request(url, timeout=timeout, headers=headers, data=data)
         return resp.text
 
-    def get_json(self, url, *, timeout, headers):
-        resp = self._request(url, timeout=timeout, headers=headers)
+    def get_json(self, url, *, timeout, headers, data):
+        resp = self._request(url, timeout=timeout, headers=headers, data=data)
         try:
             return resp.json()
         except ValueError:
@@ -477,9 +491,14 @@ class RequestsAdapter(BaseSyncAdapter):
                 "Could not deserialize using deserializer:\n%s" % resp.text
             )
 
-    def _request(self, url, *, timeout, headers):
+    def _request(self, url, *, timeout, headers, data):
         try:
-            resp = self.session.get(url, timeout=timeout, headers=headers)
+            if data:
+                resp = self.session.post(
+                    url, timeout=timeout, headers=headers, data=_convert_to_bytes(data)
+                )
+            else:
+                resp = self.session.get(url, timeout=timeout, headers=headers)
         except Exception as error:
             message = str(error)
             if isinstance(error, SocketTimeout):
@@ -558,15 +577,19 @@ class AioHTTPAdapter(BaseAsyncAdapter):
         # https://github.com/python/asyncio/issues/466
         await self.session.close()
 
-    async def get_text(self, url, *, timeout, headers):
+    async def get_text(self, url, *, timeout, headers, data):
         with self._normalize_exceptions():
-            async with self._request(url, timeout=timeout, headers=headers) as resp:
+            async with self._request(
+                url, timeout=timeout, headers=headers, data=data
+            ) as resp:
                 await self._raise_for_status(resp)
                 return await resp.text()
 
-    async def get_json(self, url, *, timeout, headers):
+    async def get_json(self, url, *, timeout, headers, data):
         with self._normalize_exceptions():
-            async with self._request(url, timeout=timeout, headers=headers) as resp:
+            async with self._request(
+                url, timeout=timeout, headers=headers, data=data
+            ) as resp:
                 await self._raise_for_status(resp)
                 try:
                     try:
@@ -590,7 +613,7 @@ class AioHTTPAdapter(BaseAsyncAdapter):
                 text=await resp.text(),
             )
 
-    def _request(self, url, *, timeout, headers):
+    def _request(self, url, *, timeout, headers, data):
         if self.proxies:
             scheme = urlparse(url).scheme
             proxy = self.proxies.get(scheme.lower())
@@ -602,9 +625,15 @@ class AioHTTPAdapter(BaseAsyncAdapter):
         # a hashsum of params to change. Some geocoders use that
         # to authenticate their requests (such as Baidu SK).
         url = yarl.URL(url, encoded=True)  # `encoded` param disables url re-encoding
-        return self.session.get(
-            url, timeout=timeout, headers=headers, proxy=proxy, ssl=self.ssl_context
-        )
+        if data:
+            return self.session.post(
+                url, timeout=timeout, headers=headers, data=_convert_to_bytes(data),
+                proxy=proxy, ssl=self.ssl_context
+            )
+        else:
+            return self.session.get(
+                url, timeout=timeout, headers=headers, proxy=proxy, ssl=self.ssl_context
+            )
 
     @contextlib.contextmanager
     def _normalize_exceptions(self):

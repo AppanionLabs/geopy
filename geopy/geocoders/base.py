@@ -350,7 +350,8 @@ class Geocoder:
             *,
             timeout=DEFAULT_SENTINEL,
             is_json=True,
-            headers=None
+            headers=None,
+            data=None
     ):
         """
         For a generated query URL, get the results.
@@ -365,9 +366,13 @@ class Geocoder:
 
         try:
             if is_json:
-                result = self.adapter.get_json(url, timeout=timeout, headers=req_headers)
+                result = self.adapter.get_json(
+                    url, timeout=timeout, headers=req_headers, data=data
+                )
             else:
-                result = self.adapter.get_text(url, timeout=timeout, headers=req_headers)
+                result = self.adapter.get_text(
+                    url, timeout=timeout, headers=req_headers, data=data
+                )
             if self.__run_async:
                 async def fut():
                     try:
