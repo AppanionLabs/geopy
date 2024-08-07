@@ -69,10 +69,16 @@ class MapTiler(Geocoder):
         self.api_key = api_key
         self.domain = domain.strip('/')
         self.api = "%s://%s%s" % (self.scheme, self.domain, self.api_path)
+        self.max_batch_size = 3
 
     def _parse_json(self, json, exactly_one=True):
+        if isinstance(json, dict):
+            return self._parse_feature(json, exactly_one=exactly_one)
+        return [self._parse_feature(feature, exactly_one=exactly_one) for feature in json]
+
+    def _parse_feature(self, feature, exactly_one):
         # Returns location, (latitude, longitude) from json feed.
-        features = json['features']
+        features = feature['features']
         if not features:
             return None
 
@@ -128,9 +134,29 @@ class MapTiler(Geocoder):
         :rtype: ``None``, :class:`geopy.location.Location` or a list of them, if
             ``exactly_one=False``.
         """
+        if isinstance(query, list):
+            return self._apply_batchwise(
+                query,
+                self._geocode,
+                exactly_one=exactly_one,
+                timeout=timeout,
+                proximity=proximity,
+                language=language,
+                bbox=bbox
+            )
+        return self._geocode(
+            query, timeout=timeout, proximity=proximity, language=language,
+            bbox=bbox, exactly_one=exactly_one
+        )
+
+    def _geocode(self, query, *, timeout, proximity, language, bbox, exactly_one):
         params = {'key': self.api_key}
 
-        query = query
+        if isinstance(query, list):
+            query = ";".join([quote(q.encode('utf-8')) for q in query])
+        else:
+            query = quote(query.encode('utf-8'))
+
         if bbox:
             params['bbox'] = self._format_bounding_box(
                 bbox, "%(lon1)s,%(lat1)s,%(lon2)s,%(lat2)s")
@@ -144,8 +170,7 @@ class MapTiler(Geocoder):
             p = Point(proximity)
             params['proximity'] = "%s,%s" % (p.longitude, p.latitude)
 
-        quoted_query = quote(query.encode('utf-8'))
-        url = "?".join((self.api % dict(query=quoted_query),
+        url = "?".join((self.api % dict(query=query),
                         urlencode(params)))
         logger.debug("%s.geocode: %s", self.__class__.__name__, url)
         callback = partial(self._parse_json, exactly_one=exactly_one)
@@ -182,6 +207,29 @@ class MapTiler(Geocoder):
         :rtype: ``None``, :class:`geopy.location.Location` or a list of them, if
             ``exactly_one=False``.
         """
+        if isinstance(query, list):
+            return self._apply_batchwise(
+                query,
+                self._reverse,
+                exactly_one=exactly_one,
+                timeout=timeout,
+                language=language
+            )
+        return self._reverse(
+            query, exactly_one=exactly_one, timeout=timeout, language=language
+        )
+
+    def _reverse(self, query, *, timeout, language, exactly_one):
+        if isinstance(query, list):
+            query = ";".join(
+                [
+                    self._coerce_point_to_string(q, "%(lon)s,%(lat)s")
+                    for q in query
+                ]
+            )
+        else:
+            query = self._coerce_point_to_string(query, "%(lon)s,%(lat)s")
+            query = quote(query.encode('utf-8'))
         params = {'key': self.api_key}
 
         if isinstance(language, str):
@@ -189,10 +237,7 @@ class MapTiler(Geocoder):
         if language:
             params['language'] = ','.join(language)
 
-        point = self._coerce_point_to_string(query, "%(lon)s,%(lat)s")
-        quoted_query = quote(point.encode('utf-8'))
-        url = "?".join((self.api % dict(query=quoted_query),
-                        urlencode(params)))
+        url = "?".join((self.api % dict(query=query), urlencode(params)))
         logger.debug("%s.reverse: %s", self.__class__.__name__, url)
         callback = partial(self._parse_json, exactly_one=exactly_one)
         return self._call_geocoder(url, callback, timeout=timeout)
