@@ -76,6 +76,7 @@ class AzureMaps(TomTom):
         self.api_reverse_batch = "%s://%s%s" % (
             self.scheme, domain, self.batch_reverse_path
         )
+        self.max_batch_size = 1000
 
     def geocode(
         self,
@@ -88,12 +89,13 @@ class AzureMaps(TomTom):
         language=None
     ):
         if isinstance(query, list):
-            return self._batch_geocode(
+            return self._apply_batchwise(
                 query,
+                self._batch_geocode,
                 exactly_one=exactly_one,
                 timeout=timeout,
-                limit=limit,
-                typeahead=typeahead,
+                limit=1,
+                typeahead=False,
                 language=language
             )
         return super().geocode(
@@ -114,8 +116,9 @@ class AzureMaps(TomTom):
         language=None
     ):
         if isinstance(query, list):
-            return self._batch_reverse(
+            return self._apply_batchwise(
                 query,
+                self._batch_reverse,
                 exactly_one=exactly_one,
                 timeout=timeout,
                 limit=1,
