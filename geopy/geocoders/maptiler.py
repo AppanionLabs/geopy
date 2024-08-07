@@ -69,7 +69,7 @@ class MapTiler(Geocoder):
         self.api_key = api_key
         self.domain = domain.strip('/')
         self.api = "%s://%s%s" % (self.scheme, self.domain, self.api_path)
-        self.max_batch_size = 3
+        self.max_batch_size = 50
 
     def _parse_json(self, json, exactly_one=True):
         if isinstance(json, dict):
