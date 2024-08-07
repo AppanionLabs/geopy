@@ -32,9 +32,10 @@ class ArcGIS(Geocoder):
 
     def __init__(
             self,
+            api_key=None,
+            *,
             username=None,
             password=None,
-            *,
             referer=None,
             token_lifetime=60,
             scheme=None,
@@ -129,12 +130,16 @@ class ArcGIS(Geocoder):
             '%s://%s%s' % (self.scheme, self.domain, self.reverse_path)
         )
 
-        # Mutable state
-        self.token = None
-        self.token_expiry = None
+        if api_key:
+            self.token = api_key
+            self.token_expiry = float('inf')  # never expires
+        else:
+            # Mutable state
+            self.token = None
+            self.token_expiry = None
 
     def geocode(self, query, *, exactly_one=True, timeout=DEFAULT_SENTINEL,
-                out_fields=None):
+                out_fields=None, language=None):
         """
         Return a location point by address.
 
@@ -154,6 +159,10 @@ class ArcGIS(Geocoder):
             https://developers.arcgis.com/rest/geocode/api-reference/geocoding-service-output.htm
             for a list of supported output fields. If you want to return all
             supported output fields, set ``out_fields="*"``.
+
+        :param language: Preferred language in which to return results. Provide
+            a two-letter ISO 639-1 language code.
+
         :type out_fields: str or iterable
 
         :rtype: ``None``, :class:`geopy.location.Location` or a list of them, if
@@ -167,6 +176,8 @@ class ArcGIS(Geocoder):
                 params['outFields'] = out_fields
             else:
                 params['outFields'] = ",".join(out_fields)
+        if language:
+            params['langCode'] = language
         url = "?".join((self.api, urlencode(params)))
         logger.debug("%s.geocode: %s", self.__class__.__name__, url)
         callback = partial(self._parse_geocode, exactly_one=exactly_one)
@@ -192,7 +203,7 @@ class ArcGIS(Geocoder):
         return geocoded
 
     def reverse(self, query, *, exactly_one=True, timeout=DEFAULT_SENTINEL,
-                distance=None):
+                distance=None, language=None):
         """
         Return an address by location point.
 
@@ -213,6 +224,9 @@ class ArcGIS(Geocoder):
             within which to search. ArcGIS has a default of 100 meters, if not
             specified.
 
+        :param language: Preferred language in which to return results. Provide
+            a two-letter ISO 639-1 language code.
+
         :rtype: ``None``, :class:`geopy.location.Location` or a list of them, if
             ``exactly_one=False``.
         """
@@ -221,6 +235,8 @@ class ArcGIS(Geocoder):
         params = {'location': location, 'f': 'json', 'outSR': wkid}
         if distance is not None:
             params['distance'] = distance
+        if language:
+            params['langCode'] = language
         url = "?".join((self.reverse_api, urlencode(params)))
         logger.debug("%s.reverse: %s", self.__class__.__name__, url)
         callback = partial(self._parse_reverse, exactly_one=exactly_one)
@@ -266,7 +282,11 @@ class ArcGIS(Geocoder):
 
         def query_callback():
             call_url = "&".join((url, urlencode({"token": self.token})))
-            headers = {"Referer": self.referer}
+
+            headers = {}
+            if self.referer:
+                headers["Referer"] = self.referer
+
             return self._call_geocoder(
                 call_url,
                 partial(maybe_reauthenticate_callback, from_token=self.token),
