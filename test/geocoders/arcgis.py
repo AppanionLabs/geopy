@@ -90,9 +90,7 @@ class TestArcGISAuthenticated(BaseTestGeocoder):
     @classmethod
     def make_geocoder(cls, **kwargs):
         return ArcGIS(
-            username=env['ARCGIS_USERNAME'],
-            password=env['ARCGIS_PASSWORD'],
-            referer=env['ARCGIS_REFERER'],
+            api_key=env['ARCGIS_APIKEY'],
             timeout=3,
             **kwargs
         )
