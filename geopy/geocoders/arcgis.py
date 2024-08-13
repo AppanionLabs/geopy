@@ -29,6 +29,7 @@ class ArcGIS(Geocoder):
     auth_path = '/sharing/generateToken'
     geocode_path = '/arcgis/rest/services/World/GeocodeServer/findAddressCandidates'
     reverse_path = '/arcgis/rest/services/World/GeocodeServer/reverseGeocode'
+    batch_geocode_path = '/arcgis/rest/services/World/GeocodeServer/geocodeAddresses'
 
     def __init__(
             self,
@@ -129,6 +130,11 @@ class ArcGIS(Geocoder):
         self.reverse_api = (
             '%s://%s%s' % (self.scheme, self.domain, self.reverse_path)
         )
+        self.batch_api = (
+            '%s://%s%s' % (self.scheme, self.domain, self.batch_geocode_path)
+        )
+
+        self.max_batch_size = 500
 
         if api_key:
             self.token = api_key
@@ -168,6 +174,46 @@ class ArcGIS(Geocoder):
         :rtype: ``None``, :class:`geopy.location.Location` or a list of them, if
             ``exactly_one=False``.
         """
+        if isinstance(query, list):
+            return self._apply_batchwise(
+                query,
+                self._batch_geocode,
+                exactly_one=exactly_one,
+                timeout=timeout,
+                out_fields=out_fields,
+                language=language
+            )
+        return self._geocode(
+            query, exactly_one=exactly_one, timeout=timeout,
+            out_fields=out_fields, language=language
+        )
+
+    def _batch_geocode(self, query, *, exactly_one, out_fields, language, timeout):
+        records = {"records": []}
+        for i, location in enumerate(query):
+            item = {
+                "attributes": {
+                    "objectid": i,
+                    "address": location
+                }
+            }
+            records["records"].append(item)
+
+        params = {
+            "f": "json",
+            "addresses": json.dumps(records),
+            "token": self.token
+        }
+
+        url = "?".join((self.batch_api, urlencode(params)))
+        logger.debug("%s._batch_geocode: %s", self.__class__.__name__, self.batch_api)
+        callback = partial(self._parse_batch_geocode)
+        return self._call_geocoder(url, callback, timeout=timeout)
+
+    def _parse_batch_geocode(self, response):
+        ...
+
+    def _geocode(self, query, *, exactly_one, timeout, out_fields, language):
         params = {'singleLine': query, 'f': 'json'}
         if exactly_one:
             params['maxLocations'] = 1
@@ -275,7 +321,7 @@ class ArcGIS(Geocoder):
             return [location]
 
     def _authenticated_call_geocoder(
-        self, url, parse_callback, *, timeout=DEFAULT_SENTINEL
+        self, url, parse_callback, *, timeout=DEFAULT_SENTINEL,
     ):
         if not self.username:
             return self._call_geocoder(url, parse_callback, timeout=timeout)
