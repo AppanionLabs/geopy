@@ -1,4 +1,5 @@
 import collections.abc
+import time
 from functools import partial
 from urllib.parse import urlencode
 
@@ -40,8 +41,10 @@ class Geoapify(Geocoder):
     }
 
     api_version = "/v1"
-    geocode_path = "/search"
-    reverse_path = "/reverse"
+    geocode_path = "/geocode/search"
+    reverse_path = "/geocode/reverse"
+    batch_geocode_path = "/batch/geocode/search"
+    batch_reverse_path = "/batch/geocode/reverse"
 
     def __init__(
         self,
@@ -93,10 +96,14 @@ class Geoapify(Geocoder):
         )
 
         self.domain = domain.strip("/")
-        self._base_url = f"{self.scheme}://{self.domain}{self.api_version}/geocode"
+        self._base_url = f"{self.scheme}://{self.domain}{self.api_version}"
 
         self.geocode_url = f"{self._base_url}{self.geocode_path}"
         self.reverse_url = f"{self._base_url}{self.reverse_path}"
+        self.batch_geocode_url = f"{self._base_url}{self.batch_geocode_path}"
+        self.batch_reverse_url = f"{self._base_url}{self.batch_reverse_path}"
+
+        self.max_batch_size = 1000
 
         self.api_key = api_key
 
@@ -156,6 +163,47 @@ class Geoapify(Geocoder):
         :rtype: ``None``, :class:`geopy.location.Location` or a list of them, if
             ``exactly_one=False``.
         """
+        if isinstance(query, list):
+            return self._apply_batchwise(
+                query,
+                self._batch_geocode,
+                reverse=False,
+                timeout=timeout,
+                language=language,
+                filter_=filter_,
+                bias=bias,
+            )
+        return self._geocode(
+            query, exactly_one, timeout, limit, language, filter_, bias
+        )
+
+    def _batch_geocode(
+        self, query, *, reverse, timeout, language=None, filter_=None, bias=None, type_=None
+    ):
+        params = {"apiKey": self.api_key, "format": "json"}
+        params = self._parse_keyword_params(
+            params,
+            lang=language,
+            filter_=filter_,
+            type_=type_,
+            bias=bias,
+        )
+
+        if reverse:
+            query = [(lon, lat) for lat, lon in query]
+            url = self._construct_url(self.batch_reverse_url, params)
+        else:
+            url = self._construct_url(self.batch_geocode_url, params)
+
+        logger.debug(f"{self.__class__.__name__}.geocode: {url}")
+        headers = {"Content-Type": "application/json"}
+        job_url = self._call_geocoder(
+            url, self._get_job_url, timeout=timeout, data=query, headers=headers
+        )
+        callback = partial(self._get_job_results, url=job_url)
+        return self._call_geocoder(job_url, callback, timeout=30)
+
+    def _geocode(self, query, exactly_one, timeout, limit, language, filter_, bias):
         params = (
             {k: v for k, v in query.items() if k in self.structured_query_params}
             if isinstance(query, collections.abc.Mapping)
@@ -222,18 +270,26 @@ class Geoapify(Geocoder):
         :rtype: ``None``, :class:`geopy.location.Location` or a list of them, if
             ``exactly_one=False``.
         """
+        if isinstance(query, list):
+            return self._apply_batchwise(
+                query,
+                self._batch_geocode,
+                reverse=True,
+                timeout=timeout,
+                language=language,
+                type_=type_,
+            )
+        return self._reverse(
+            query, exactly_one, timeout, limit, language, type_
+        )
+
+    def _reverse(self, query, exactly_one, timeout, limit, language, type_):
         try:
             lat, lon = self._coerce_point_to_string(query).split(",")
         except ValueError:
             raise ValueError("Must be a coordinate pair or Point")
 
-        params = {
-            "lat": lat,
-            "lon": lon,
-            "format": "json",
-        }
-
-        params["apiKey"] = self.api_key
+        params = {"lat": lat, "lon": lon, "format": "json", "apiKey": self.api_key}
 
         params = self._parse_keyword_params(
             params,
@@ -274,6 +330,22 @@ class Geoapify(Geocoder):
 
         return params
 
+    def _get_job_url(self, results):
+        """Parse results returned by API"""
+        job_id = results.get("id")
+        job_url = results.get("url")
+        if not job_id:
+            raise GeocoderQueryError(str(results))
+        return job_url
+
+    def _get_job_results(self, results, url):
+        if isinstance(results, dict):
+            # wait a bit before checking the job status
+            time.sleep(5)
+            callback = partial(self._get_job_results, url=url)
+            return self._call_geocoder(url, callback, timeout=30)
+        return [self._parse_result(result) for result in results]
+
     def _construct_url(self, url, params):
         """Construct URL for request
 
@@ -305,8 +377,11 @@ class Geoapify(Geocoder):
 
     def _parse_result(self, result):
         """Parse each result from ``_parse_json``"""
-        location = result.get("formatted")
+        address = result.get("formatted")
         latitude = result.get("lat")
         longitude = result.get("lon")
 
-        return Location(location, (latitude, longitude), result)
+        if not address:
+            return None
+
+        return Location(address, (latitude, longitude), result)
