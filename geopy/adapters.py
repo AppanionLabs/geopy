@@ -261,7 +261,7 @@ def _normalize_proxies(proxies):
 def _convert_to_bytes(data):
     if isinstance(data, str):
         return data.encode("utf-8")
-    elif isinstance(data, dict):
+    elif isinstance(data, (dict, list)):
         return json.dumps(data).encode("utf-8")
     return data
 
