@@ -2,6 +2,7 @@ from functools import partial
 from urllib.parse import quote, urlencode
 
 from geopy.geocoders.base import DEFAULT_SENTINEL, Geocoder
+from geopy.exc import GeocoderParseError
 from geopy.location import Location
 from geopy.point import Point
 from geopy.util import logger
@@ -17,6 +18,7 @@ class MapBox(Geocoder):
     """
 
     api_path = '/geocoding/v5/mapbox.places/%(query)s.json/'
+    batch_api_path = '/search/geocode/v6/batch'
 
     def __init__(
             self,
@@ -75,6 +77,8 @@ class MapBox(Geocoder):
         self.api_key = api_key
         self.domain = domain.strip('/')
         self.api = "%s://%s%s" % (self.scheme, self.domain, self.api_path)
+        self.batch_api = "%s://%s%s" % (self.scheme, self.domain, self.batch_api_path)
+        self.max_batch_size = 1000
         if referer:
             self.headers['Referer'] = referer
 
@@ -85,7 +89,14 @@ class MapBox(Geocoder):
             return None
 
         def parse_feature(feature):
-            location = feature['place_name']
+            if "place_name" in feature:
+                location = feature['place_name']
+            elif "properties" in feature:
+                location = feature.get("properties", {}).get("full_address")
+            else:
+                raise GeocoderParseError(
+                    "Could not parse JSON response: %r" % feature
+                )
             longitude = feature['geometry']['coordinates'][0]
             latitude = feature['geometry']['coordinates'][1]
             return Location(location, (latitude, longitude), feature)
@@ -93,6 +104,11 @@ class MapBox(Geocoder):
             return parse_feature(features[0])
         else:
             return [parse_feature(feature) for feature in features]
+
+    def _parse_batch_json(self, json, exactly_one=True):
+        '''Returns location, (latitude, longitude) from json feed.'''
+        items = json["batch"]
+        return [self._parse_json(item, exactly_one) for item in items]
 
     def geocode(
             self,
@@ -145,6 +161,76 @@ class MapBox(Geocoder):
         :rtype: ``None``, :class:`geopy.location.Location` or a list of them, if
             ``exactly_one=False``.
         """
+        if isinstance(query, list):
+            return self._apply_batchwise(
+                query,
+                self._batch_geocode,
+                exactly_one=exactly_one,
+                timeout=timeout,
+                proximity=proximity,
+                country=country,
+                language=language,
+                bbox=bbox
+            )
+        return self._geocode(
+            query,
+            exactly_one=exactly_one,
+            timeout=timeout,
+            proximity=proximity,
+            country=country,
+            language=language,
+            bbox=bbox
+        )
+
+    def _batch_geocode(
+            self,
+            query,
+            *,
+            exactly_one=True,
+            timeout=DEFAULT_SENTINEL,
+            proximity=None,
+            country=None,
+            language=None,
+            bbox=None
+    ):
+        data = []
+        for location in query:
+            item = {
+                "types": ["address"],
+                "q": location,
+            }
+            if bbox:
+                item['bbox'] = self._format_bounding_box(
+                    bbox, "%(lon1)s,%(lat1)s,%(lon2)s,%(lat2)s")
+            if country:
+                item['country'] = [country] if isinstance(country, str) else country
+            if proximity:
+                p = Point(proximity)
+                item['proximity'] = "%s,%s" % (p.longitude, p.latitude)
+            if language:
+                item['language'] = language
+            if exactly_one:
+                item['limit'] = 1
+            data.append(item)
+
+        url = f"{self.batch_api}?access_token={self.api_key}"
+        logger.debug("%s._batch_geocode: %s", self.__class__.__name__, url)
+        callback = partial(self._parse_batch_json, exactly_one=exactly_one)
+        headers = {'Content-Type': 'application/json'}
+        return self._call_geocoder(url, callback, timeout=timeout, data=data, headers=headers)
+
+
+    def _geocode(
+            self,
+            query,
+            *,
+            exactly_one=True,
+            timeout=DEFAULT_SENTINEL,
+            proximity=None,
+            country=None,
+            language=None,
+            bbox=None
+    ):
         params = {}
 
         params['access_token'] = self.api_key
@@ -179,7 +265,8 @@ class MapBox(Geocoder):
             *,
             exactly_one=True,
             timeout=DEFAULT_SENTINEL,
-            language=None
+            language=None,
+            country=None,
     ):
         """
         Return an address by location point.
@@ -205,6 +292,45 @@ class MapBox(Geocoder):
         :rtype: ``None``, :class:`geopy.location.Location` or a list of them, if
             ``exactly_one=False``.
         """
+        if isinstance(query, list):
+            return self._apply_batchwise(
+                query,
+                self._batch_reverse,
+                exactly_one=exactly_one,
+                timeout=timeout,
+                language=language,
+                country=country
+            )
+        return self._reverse(
+            query,
+            exactly_one=exactly_one,
+            timeout=timeout,
+            language=language
+        )
+
+    def _batch_reverse(self, query, *, exactly_one, timeout, language, country):
+        data = []
+        for location in query:
+            item = {
+                "types": ["address"],
+                "latitude": location[0],
+                "longitude": location[1],
+            }
+            if language:
+                item['language'] = language
+            if country:
+                item['country'] = [country] if isinstance(country, str) else country
+            if exactly_one:
+                item['limit'] = 1
+            data.append(item)
+
+        url = f"{self.batch_api}?access_token={self.api_key}"
+        logger.debug("%s._batch_reverse: %s", self.__class__.__name__, url)
+        callback = partial(self._parse_batch_json, exactly_one=exactly_one)
+        headers = {'Content-Type': 'application/json'}
+        return self._call_geocoder(url, callback, timeout=timeout, data=data, headers=headers)
+
+    def _reverse(self, query, *, exactly_one, timeout, language):
         params = {}
         params['access_token'] = self.api_key
 
