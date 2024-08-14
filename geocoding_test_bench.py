@@ -41,12 +41,8 @@ COORDINATES = [
 
 SERVICES = [
     "ARCGIS",
-    "AZURE",
-    "GEOAPIFY",
     "GOOGLE",
     "HEREV7",
-    "MAPBOX",
-    "MAPTILER",
     "OPENCAGE",
 ]
 
@@ -59,8 +55,12 @@ BATCH_SERVICES = [
 
 with open(".test_keys") as fp:
     services_api_key = json.load(fp)
-    services_api_key = {service: api_key for service, api_key in services_api_key.items()
-                        if service in SERVICES}
+    all_services = SERVICES + BATCH_SERVICES
+    services_api_key = {
+        service: api_key
+        for service, api_key in services_api_key.items()
+        if service in all_services
+    }
 
 
 def timefunc(fn):
@@ -157,22 +157,18 @@ def _get_geocoder_class(service):
 
 
 def main():
-    processed_services = []
-
     forward_results = []
     for service, api_key in services_api_key.items():
         logging.info(f"Testing forward geocoding >> {service}")
         geocoder_class = _get_geocoder_class(service)
-        processed_services.append(service)
-
-        forward_results.append(
-            asyncio.run(async_forward_geocode(geocoder_class, api_key))
-        )
 
         if service in BATCH_SERVICES:
-            processed_services.append(f"BATCH >> {service}")
             forward_results.append(
                 sync_batch_forward_geocode(geocoder_class, api_key)
+            )
+        else:
+            forward_results.append(
+                asyncio.run(async_forward_geocode(geocoder_class, api_key))
             )
 
     reverse_results = []
@@ -180,18 +176,18 @@ def main():
         logging.info(f"Testing reverse geocoding >> {service}")
         geocoder_class = _get_geocoder_class(service)
 
-        reverse_results.append(
-            asyncio.run(async_reverse_geocode(geocoder_class, api_key))
-        )
         if service in BATCH_SERVICES:
             reverse_results.append(
                 sync_batch_reverse_geocoding(geocoder_class, api_key)
             )
-
+        else:
+            reverse_results.append(
+                asyncio.run(async_reverse_geocode(geocoder_class, api_key))
+            )
 
     # load results into a pandas DataFrame
     index = [[], []]
-    for service in processed_services:
+    for service in services_api_key.keys():
         for address, coordinate in zip(ADDRESSES, COORDINATES):
             index[0].append(f"{service}")
             index[1].append(f"{address} - {coordinate}")
