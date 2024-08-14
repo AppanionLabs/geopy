@@ -196,7 +196,7 @@ class MapBox(Geocoder):
         data = []
         for location in query:
             item = {
-                "types": ["address"],
+                "types": ["address", "street", "postcode", "locality", "country"],
                 "q": location,
             }
             if bbox:
@@ -312,7 +312,7 @@ class MapBox(Geocoder):
         data = []
         for location in query:
             item = {
-                "types": ["address"],
+                "types": ["address", "street", "postcode", "locality", "country"],
                 "latitude": location[0],
                 "longitude": location[1],
             }
